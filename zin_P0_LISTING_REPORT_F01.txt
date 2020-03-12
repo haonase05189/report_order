@@ -1,0 +1,611 @@
+﻿*&---------------------------------------------------------------------*
+*&  Include           ZIN_PO_LISTING_REPORT_F01
+*&---------------------------------------------------------------------*
+FORM GET_PARAMETER.
+  "Check paramter.
+
+ENDFORM.
+
+
+FORM GET_DATA.
+  DATA:
+    LT_EKKO_EKPO_TMP TYPE STANDARD TABLE OF GTY_EKKO_EKPO,
+    LT_LFA1_ADRC     TYPE STANDARD TABLE OF GTY_EKKO_EKPO,
+
+    LT_LFA1          TYPE STANDARD TABLE OF GTY_LFA1.
+
+  SELECT
+        A~EBELN  "Purchasing Document Number
+        B~EBELP  "Item Number
+        A~BSART
+        A~BEDAT
+        A~ERNAM
+        A~INCO1
+        A~LIFNR
+        A~ZCON
+        A~ERNAM
+
+        B~KONNR
+        B~BANFN
+        B~BNFPO
+        B~MATNR
+        B~TXZ01
+        B~MENGE
+        B~MEINS
+        B~NETPR
+        B~NETWR
+        B~LOEKZ
+        B~KNTTP
+        B~PSTYP
+
+  FROM EKKO AS A
+    INNER JOIN EKPO AS B
+    ON A~EBELN = B~EBELN
+  INTO CORRESPONDING FIELDS OF TABLE GT_EKKO_EKPO
+  WHERE A~EBELN IN S_EBELN
+    AND A~BSART IN S_BSART
+    AND A~BEDAT IN S_BEDAT
+    AND B~LOEKZ = P_LOEKZ
+    .
+
+  CHECK GT_EKKO_EKPO IS NOT INITIAL.
+*----------------------------------------------------------------------*
+*	Start 12/03/2020
+*  NGS-TruongNH
+*  Description: change logic Item category
+*----------------------------------------------------------------------*
+  REFRESH: LT_EKKO_EKPO_TMP[].
+  LT_EKKO_EKPO_TMP[] = GT_EKKO_EKPO[].
+  SORT LT_EKKO_EKPO_TMP BY PSTYP.
+  DELETE ADJACENT DUPLICATES FROM LT_EKKO_EKPO_TMP COMPARING PSTYP.
+
+  SELECT PSTYP
+         EPSTP
+    FROM T163Y
+    INTO CORRESPONDING FIELDS OF TABLE GT_T163Y
+    FOR ALL ENTRIES IN LT_EKKO_EKPO_TMP
+    WHERE PSTYP = LT_EKKO_EKPO_TMP-PSTYP
+      AND SPRAS = SY-LANGU.
+*----------------------------------------------------------------------*
+*	End
+*----------------------------------------------------------------------*
+
+  "COT 9
+  SELECT *
+    FROM USER_ADDRP
+    INTO TABLE GT_USER_ADDRP
+    FOR ALL ENTRIES IN GT_EKKO_EKPO
+    WHERE BNAME = GT_EKKO_EKPO-ERNAM
+    .
+
+  "COT10
+  LT_EKKO_EKPO_TMP[] = GT_EKKO_EKPO[].
+  DELETE LT_EKKO_EKPO_TMP WHERE BANFN = ''.
+  IF LT_EKKO_EKPO_TMP IS NOT INITIAL.
+    SELECT
+      BANFN
+      BNFPO
+      LFDAT
+      FROM EBAN
+      INTO TABLE GT_EBAN
+      FOR ALL ENTRIES IN LT_EKKO_EKPO_TMP
+      WHERE BANFN = LT_EKKO_EKPO_TMP-BANFN
+      .
+  ENDIF.
+
+  "COT 12, 25
+  SELECT
+      EBELN
+      EBELP
+      ETENR
+      EINDT
+      MENGE
+      WEMNG
+    FROM EKET
+    INTO TABLE GT_EKET
+    FOR ALL ENTRIES IN GT_EKKO_EKPO
+    WHERE EBELN = GT_EKKO_EKPO-EBELN
+    .
+
+  "COT 19,20,21
+  REFRESH LT_EKKO_EKPO_TMP.
+  LT_EKKO_EKPO_TMP[] = GT_EKKO_EKPO[].
+  DELETE LT_EKKO_EKPO_TMP WHERE LIFNR = ''.
+  IF LT_EKKO_EKPO_TMP IS NOT INITIAL.
+    SELECT
+        LIFNR
+        NAME1
+        STRAS
+        TELF1
+      FROM LFA1
+      INTO TABLE GT_LFA1
+      FOR ALL ENTRIES IN LT_EKKO_EKPO_TMP
+      WHERE LIFNR = LT_EKKO_EKPO_TMP-LIFNR
+      .
+  ENDIF.
+
+*----------------------------------------------------------------------*
+*	Start
+*  NGS-TruongNH
+*  Description: get add mail
+*----------------------------------------------------------------------*
+  LT_LFA1[] = GT_LFA1[].
+
+  LOOP AT LT_LFA1 ASSIGNING FIELD-SYMBOL(<FS_LFA1>).
+    <FS_LFA1>-NAME2 = <FS_LFA1>-NAME1.
+  ENDLOOP.
+
+  SORT LT_LFA1 BY NAME1.
+
+  DELETE ADJACENT DUPLICATES FROM LT_LFA1.
+
+  SELECT A~NAME1
+         A~ADDRNUMBER
+
+         B~SMTP_ADDR
+
+    FROM ADRC AS A
+    INNER JOIN ADR6 AS B
+    ON A~ADDRNUMBER = B~ADDRNUMBER
+    INTO CORRESPONDING FIELDS OF TABLE GT_ADDMAIL
+    FOR ALL ENTRIES IN LT_LFA1
+    WHERE A~NAME1 = LT_LFA1-NAME2.
+
+*----------------------------------------------------------------------*
+*	End
+*----------------------------------------------------------------------*
+
+  "COT 26
+  SELECT
+      MBLNR
+      MJAHR
+      ZEILE
+      EBELN
+      CPUDT_MKPF
+    FROM MSEG
+    INTO TABLE GT_MSEG
+    FOR ALL ENTRIES IN GT_EKKO_EKPO
+    WHERE EBELN = GT_EKKO_EKPO-EBELN
+    .
+
+ENDFORM.
+
+FORM PROCESS_DATA.
+  FIELD-SYMBOLS: <LFS_DATA> TYPE GTY_DATA.
+
+  DATA:
+    LT_CDHDR    TYPE STANDARD TABLE OF CDHDR,
+    LS_CDHDR    TYPE CDHDR,
+    LT_EDITPOS  TYPE STANDARD TABLE OF CDSHW,
+    LS_EDITPOS  TYPE CDSHW,
+    LV_OBJECTID TYPE CDHDR-OBJECTID.
+  .
+
+  MOVE-CORRESPONDING GT_EKKO_EKPO TO GT_DATA.
+
+  SORT GT_MSEG BY MBLNR MJAHR ZEILE ASCENDING CPUDT_MKPF DESCENDING.
+
+  LOOP AT GT_DATA ASSIGNING <LFS_DATA>.
+    "cot 5
+    REFRESH: LT_CDHDR, LT_EDITPOS.
+    CLEAR: LS_CDHDR, LS_EDITPOS,LV_OBJECTID.
+    LV_OBJECTID = <LFS_DATA>-BANFN.
+    CALL FUNCTION 'CHANGEDOCUMENT_READ_HEADERS'
+      EXPORTING
+        OBJECTCLASS                = 'BANF'
+        OBJECTID                   = LV_OBJECTID "<LFS_DATA>-BANFN
+        TIME_ZONE                  = 'UTC'
+        DATE_UNTIL                 = '99991231'
+        TIME_UNTIL                 = '235959'
+      TABLES
+        I_CDHDR                    = LT_CDHDR
+      EXCEPTIONS
+        NO_POSITION_FOUND          = 1
+        WRONG_ACCESS_TO_ARCHIVE    = 2
+        TIME_ZONE_CONVERSION_ERROR = 3
+        OTHERS                     = 4.
+    IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+    ENDIF.
+    SORT LT_CDHDR BY OBJECTID ASCENDING UDATE DESCENDING.
+    LOOP AT LT_CDHDR INTO LS_CDHDR.
+      CALL FUNCTION 'CHANGEDOCUMENT_READ_POSITIONS'
+        EXPORTING
+          CHANGENUMBER            = LS_CDHDR-CHANGENR
+          I_PREP_UNIT             = 'X'
+        TABLES
+          EDITPOS                 = LT_EDITPOS
+        EXCEPTIONS
+          NO_POSITION_FOUND       = 1
+          WRONG_ACCESS_TO_ARCHIVE = 2
+          OTHERS                  = 3.
+      IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+      ENDIF.
+
+      READ TABLE LT_EDITPOS INTO LS_EDITPOS
+                            WITH KEY FNAME = 'FRGZU'
+                                     F_NEW = 'XXXX'
+                                     .
+      IF SY-SUBRC = 0.
+        <LFS_DATA>-UDATE_PR = LS_CDHDR-UDATE.
+        EXIT. "thoat vong loop.
+      ENDIF.
+    ENDLOOP.
+    "---end cot 5
+
+    "cot 7
+    REFRESH: LT_CDHDR, LT_EDITPOS.
+    CLEAR: LS_CDHDR, LS_EDITPOS,LV_OBJECTID.
+    LV_OBJECTID = <LFS_DATA>-EBELN.
+    CALL FUNCTION 'CHANGEDOCUMENT_READ_HEADERS'
+      EXPORTING
+        OBJECTCLASS                = 'EINKBELEG'
+        OBJECTID                   = LV_OBJECTID "<LFS_DATA>-EBELN
+        TIME_ZONE                  = 'UTC'
+        DATE_UNTIL                 = '99991231'
+        TIME_UNTIL                 = '235959'
+      TABLES
+        I_CDHDR                    = LT_CDHDR
+      EXCEPTIONS
+        NO_POSITION_FOUND          = 1
+        WRONG_ACCESS_TO_ARCHIVE    = 2
+        TIME_ZONE_CONVERSION_ERROR = 3
+        OTHERS                     = 4.
+    IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+    ENDIF.
+    SORT LT_CDHDR BY OBJECTID ASCENDING UDATE DESCENDING.
+    LOOP AT LT_CDHDR INTO LS_CDHDR.
+      CALL FUNCTION 'CHANGEDOCUMENT_READ_POSITIONS'
+        EXPORTING
+          CHANGENUMBER            = LS_CDHDR-CHANGENR
+          I_PREP_UNIT             = 'X'
+        TABLES
+          EDITPOS                 = LT_EDITPOS
+        EXCEPTIONS
+          NO_POSITION_FOUND       = 1
+          WRONG_ACCESS_TO_ARCHIVE = 2
+          OTHERS                  = 3.
+      IF SY-SUBRC <> 0.
+* Implement suitable error handling here
+      ENDIF.
+
+      READ TABLE LT_EDITPOS INTO LS_EDITPOS
+                            WITH KEY FNAME = 'FRGZU'
+                                     F_NEW = 'X'
+                                     .
+      IF SY-SUBRC = 0.
+        <LFS_DATA>-UDATE_PO = LS_CDHDR-UDATE.
+        EXIT. "thoat vong loop.
+      ENDIF.
+    ENDLOOP.
+    "---end cot 7
+
+    "cot 9
+    READ TABLE GT_USER_ADDRP INTO GS_USER_ADDRP
+                              WITH KEY BNAME = <LFS_DATA>-ERNAM.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-NAME_TEXT = GS_USER_ADDRP-NAME_TEXT.
+    ENDIF.
+
+    "cot 10
+    READ TABLE GT_EBAN INTO GS_EBAN
+                        WITH KEY BANFN = <LFS_DATA>-BANFN.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-LFDAT = GS_EBAN-LFDAT.
+    ENDIF.
+
+    "cot 12, 25
+    READ TABLE GT_EKET INTO GS_EKET
+                        WITH KEY EBELN = <LFS_DATA>-EBELN.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-EINDT = GS_EKET-EINDT.
+      <LFS_DATA>-MENGE_EKET = GS_EKET-MENGE - GS_EKET-WEMNG.
+    ENDIF.
+
+    "cot 19,20,21
+    READ TABLE GT_LFA1 INTO GS_LFA1
+                        WITH KEY LIFNR = <LFS_DATA>-LIFNR.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-NAME1 = GS_LFA1-NAME1.
+      <LFS_DATA>-STRAS = GS_LFA1-STRAS.
+      <LFS_DATA>-TELF1 = GS_LFA1-TELF1.
+    ENDIF.
+
+    "cot 26
+    READ TABLE GT_MSEG INTO GS_MSEG
+                         WITH KEY EBELN = <LFS_DATA>-EBELN.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-CPUDT_MKPF = GS_MSEG-CPUDT_MKPF.
+    ENDIF.
+
+    " cot 22
+      READ TABLE GT_ADDMAIL INTO GS_ADDMAIL
+                              WITH KEY NAME1 = <LFS_DATA>-NAME1.
+      IF SY-SUBRC = 0.
+        <LFS_DATA>-SMTP_ADDR = GS_ADDMAIL-SMTP_ADDR.
+      ENDIF.
+
+
+    "cot 30
+    READ TABLE GT_T163Y INTO DATA(LS_T163Y)
+                           WITH KEY PSTYP = <LFS_DATA>-PSTYP.
+    IF SY-SUBRC = 0.
+      <LFS_DATA>-EPSTP = LS_T163Y-EPSTP.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.
+
+FORM DISPLAY_DATA.
+****    Related to ALV field catalog,
+  DATA: LI_FCAT    TYPE SLIS_T_FIELDCAT_ALV,
+        LST_FCAT   TYPE SLIS_FIELDCAT_ALV,
+        LST_LAYOUT TYPE SLIS_LAYOUT_ALV.
+
+*    KONNR TYPE KONNR,
+*    ZCON  TYPE CHAR12,
+*    BANFN TYPE BANFN,
+*    BNFPO TYPE BNFPO,
+*    UDATE_PR TYPE CDDATUM,
+*    EBELN TYPE EBELN,
+*    UDATE_PO TYPE CDDATUM,
+*    EBELP TYPE EBELP,
+*    NAME_TEXT TYPE NAME_TEXT,
+*    LFDAT TYPE EINDT,
+*    BEDAT TYPE BEDAT,
+*    EINDT TYPE EINDT,
+*    MATNR TYPE MATNR,
+*    TXZ01 TYPE TXZ01,
+*    MENGE TYPE MENGE,
+*    MEINS TYPE MEINS,
+*    NETPR TYPE NETPR,
+*    NETWR TYPE NETWR,
+*    NAME1 TYPE NAME1_GP,
+*    STRAS TYPE STRAS_GP,
+*    TELF1 TYPE TELF1,
+*    SMTP_ADDR TYPE AD_SMTPADR,
+*    LIFNR TYPE ELIFN,
+*    INCO1 TYPE INCO1,
+*    MENGE_EKET TYPE ETMEN,
+*    WEMNG_EKET TYPE WEEMG,
+*    CPUDT_MKPF TYPE CPUDT,
+*    LOEKZ TYPE ELOEK,
+*    BSART TYPE ESART,
+*    KNTTP TYPE KNTTP,
+*    PSTYP TYPE PSTYP,
+*
+  BREAK NGS009.
+
+  LST_FCAT-FIELDNAME = 'KONNR'.
+  LST_FCAT-COL_POS = '1'.
+  LST_FCAT-SELTEXT_L = 'Contract No'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'ZCON'.
+  LST_FCAT-COL_POS = '2'.
+  LST_FCAT-SELTEXT_L = 'Hard copy Contract No'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'BANFN'.
+  LST_FCAT-COL_POS = '3'.
+  LST_FCAT-SELTEXT_L = 'PR Number'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'BNFPO'.
+  LST_FCAT-COL_POS = '4'.
+  LST_FCAT-SELTEXT_L = 'PR line'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'UDATE_PR'.
+  LST_FCAT-COL_POS = '5'.
+  LST_FCAT-SELTEXT_L = 'Last PR approval date'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'EBELN'.
+  LST_FCAT-COL_POS = '6'.
+  LST_FCAT-SELTEXT_L = 'PO number'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'UDATE_PO'.
+  LST_FCAT-COL_POS = '7'.
+  LST_FCAT-SELTEXT_L = 'Last PO approval date'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'EBELP'.
+  LST_FCAT-COL_POS = '8'.
+  LST_FCAT-SELTEXT_L = 'PO Item line'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'NAME_TEXT'.
+  LST_FCAT-COL_POS = '9'.
+  LST_FCAT-SELTEXT_L = 'PO PIC'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'LFDAT'.
+  LST_FCAT-COL_POS = '10'.
+  LST_FCAT-SELTEXT_L = 'PR delivery date'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'BEDAT'.
+  LST_FCAT-COL_POS = '11'.
+  LST_FCAT-SELTEXT_L = 'PO created on'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'EINDT'.
+  LST_FCAT-COL_POS = '12'.
+  LST_FCAT-SELTEXT_L = 'PO delivery date'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'MATNR'.
+  LST_FCAT-COL_POS = '13'.
+  LST_FCAT-SELTEXT_L = 'Material'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'TXZ01'.
+  LST_FCAT-COL_POS = '14'.
+  LST_FCAT-SELTEXT_L = 'Short text'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'MENGE'.
+  LST_FCAT-COL_POS = '15'.
+  LST_FCAT-SELTEXT_L = 'PO Order Quantity'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'MEINS'.
+  LST_FCAT-COL_POS = '16'.
+  LST_FCAT-SELTEXT_L = 'PO Order unit'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'NETPR'.
+  LST_FCAT-COL_POS = '17'.
+  LST_FCAT-SELTEXT_L = 'PO Net order price'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'NETWR'.
+  LST_FCAT-COL_POS = '18'.
+  LST_FCAT-SELTEXT_L = 'PO Net order value'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'NAME1'.
+  LST_FCAT-COL_POS = '19'.
+  LST_FCAT-SELTEXT_L = 'Vendor Name'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'STRAS'.
+  LST_FCAT-COL_POS = '20'.
+  LST_FCAT-SELTEXT_L = 'Vendor Address'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'TELF1'.
+  LST_FCAT-COL_POS = '21'.
+  LST_FCAT-SELTEXT_L = 'Vendor Phone No'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'SMTP_ADDR'.
+  LST_FCAT-COL_POS = '22'.
+  LST_FCAT-SELTEXT_L = 'Vendor Email'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'LIFNR'.
+  LST_FCAT-COL_POS = '23'.
+  LST_FCAT-SELTEXT_L = 'Vendor code'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'INCO1'.
+  LST_FCAT-COL_POS = '24'.
+  LST_FCAT-SELTEXT_L = 'Incoterm'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'MENGE_EKET'.
+  LST_FCAT-COL_POS = '25'.
+  LST_FCAT-SELTEXT_L = 'Open quantity'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'CPUDT_MKPF'.
+  LST_FCAT-COL_POS = '26'.
+  LST_FCAT-SELTEXT_L = 'Latest GR date'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'LOEKZ'.
+  LST_FCAT-COL_POS = '27'.
+  LST_FCAT-SELTEXT_L = 'Status'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'BSART'.
+  LST_FCAT-COL_POS = '28'.
+  LST_FCAT-SELTEXT_L = 'PO document type'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'KNTTP'.
+  LST_FCAT-COL_POS = '29'.
+  LST_FCAT-SELTEXT_L = 'PO Account assignment category'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_FCAT-FIELDNAME = 'EPSTP'.
+  LST_FCAT-COL_POS = '30'.
+  LST_FCAT-SELTEXT_L = 'Item category'.
+  APPEND LST_FCAT TO LI_FCAT.
+  CLEAR LST_FCAT.
+
+  LST_LAYOUT-ZEBRA = ABAP_TRUE .
+  LST_LAYOUT-COLWIDTH_OPTIMIZE = ABAP_TRUE.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      I_CALLBACK_PROGRAM = SY-REPID
+      I_GRID_TITLE       = 'Summary'
+      IS_LAYOUT          = LST_LAYOUT
+      IT_FIELDCAT        = LI_FCAT
+    TABLES
+      T_OUTTAB           = GT_DATA
+    EXCEPTIONS
+      PROGRAM_ERROR      = 1
+      OTHERS             = 2.
+  IF SY-SUBRC <> 0.
+*    MESSAGE I012.  "Issue in ALV Display!
+    LEAVE LIST-PROCESSING.
+  ENDIF."IF sy-subrc <> 0....CALL FUNCTION 'REUSE_ALV_.......
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*&      Form  SEL_INT
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM SEL_INT .
+  " check PO Number
+  SELECT COUNT(*)
+    FROM EKKO
+    WHERE EBELN IN S_EBELN
+      AND BSART IN ('ZCM', 'ZSPO', 'ZFO', 'ZNB', 'ZCR', 'NB', 'FO').
+
+  IF SY-SUBRC <> 0.
+    MESSAGE 'Do not exist PO number with ref PO type' TYPE 'E'.
+  ENDIF.
+
+*  "check PO Type
+  SELECT COUNT(*)
+    FROM EKKO
+    WHERE BSART IN S_BSART
+      AND BSART IN ('ZCM', 'ZSPO', 'ZFO', 'ZNB', 'ZCR', 'NB', 'FO').
+
+  IF SY-SUBRC <> 0.
+    MESSAGE 'Do not exist PO type with ref PO type' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
